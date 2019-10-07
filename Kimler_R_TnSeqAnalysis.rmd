@@ -1,0 +1,279 @@
+---
+title: "RB-TnSeq library production analysis"
+output: html_document
+---
+
+## Description
+
+This document describes data processing and plotting steps for analysis of a newly created RB-TnSeq (Deutschbauer 2015) library. It requires barcode pool files produced by the TnSeq shell pipeline TnSeqPipe.sh from fastq reads and an organized species gene list for the species in which the library was created, in this case, Cupriavidus necator H16 and Oligotropha carboxidovorans OM5.
+
+The first part of this document (link) parses the pooled mutants to visualize transposon insertion using the package "BioCircos", a derivative of Circos. The second part, (link), analyzes systemic transposon insertion bias.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+# Load packages
+
+library(BioCircos)
+library(RColorBrewer)
+library(tidyverse)
+library(ggpubr)
+library(tidyr)
+library(zoo)
+library(data.table)
+```
+#Step 1: Loading processed data
+Read the data from TnSeq Pipeline parsing output. Pool_file contains loci of insertion and number of reads associated with the corresponding barcode. Genes.GC contains a short description and the GC content of all genes in the organism. Pool_file.hit lists genes that received at least one insertion. It will be used later.
+
+```{r}
+#Move to the working directory of the TnSeq pipeline output
+setwd("~/Documents/HudsonLab/TnSeq4/Re")
+poolfile <- read.csv(file="pool_file",header=TRUE,sep="\t",stringsAsFactors=FALSE)
+genesfile <- read.csv(file="genes.GC",header=TRUE,sep="\t",stringsAsFactors=FALSE)
+hitfile <- read.csv(file="pool_file.hit",header=TRUE,sep="\t",stringsAsFactors=FALSE)
+```
+#Step 2: Information about the pool
+```{r}
+#Number of unique barcodes
+paste(poolfile$barcode %>% length, "unique barcodes in the pool")
+
+#Number of annotated genes in the organism
+paste(genesfile$locusId %>% length, "genes in this organism")
+
+#Number of genes with at least one transposon insertion
+paste(hitfile$sysName %>% length, "genes with one transposon within central 10-90% of bp")
+
+#Number of genes not hit by transposons
+paste((genesfile$locusId %>% length) - (hitfile$sysName %>% length), "genes without central insertions")
+```
+#Step 3: Reformat annotations
+```{r}
+# Subset pool data to reduce memory usage
+poolsubset <- poolfile %>% select(scaffold,pos,nTot)
+rm("poolfile")
+
+# Reformat genes.GC annotation to reduce algorithmic replacement load
+map2 <- data.frame(scaffold=c("NC_008313","NC_008314","AY305378"),locusId=c("Ch1","Ch2","pHG1"),stringsAsFactors=FALSE)
+genessubset<-genesfile %>% select(scaffoldId,begin,end,strand,desc,GC)
+genessubset$length <- abs(genessubset$begin - genessubset$end)
+```
+
+Next, tables are reformatted and reannotated to allow joining.
+
+```{r}
+# Rename chromosomes in pool and annotation file
+
+genessubset<-
+genessubset %>%
+  rename(scaffold=scaffoldId)
+
+genessubset <-
+genessubset %>%
+  left_join(map2,by="scaffold") %>%
+  mutate(scaffold = locusId) %>%
+  select(-locusId)
+
+poolsubset <-
+poolsubset %>%
+  left_join(map2,by="scaffold") %>%
+  mutate(scaffold = locusId) %>%
+  select(-locusId)
+
+# Reformat and sort the pool file by position
+poolsubset <- poolsubset[order(poolsubset[,1],poolsubset[,2],decreasing=FALSE),]
+```
+
+Pool and gene datasets are joined by placing insertion loci within gene start and end sites.
+All insertions in unannotated genes and intergenic regions are called "NA" for now.
+```{r}
+poolsubset$pos <- as.numeric(as.character(poolsubset$pos))
+x = data.table(poolsubset)
+y = data.table(genessubset)
+#dummy begin/end columns are created in the pool file to allow foverlap function
+x$begin <- x$pos
+x$end <- x$pos
+setkey(y,scaffold,begin,end)
+annotatedpool <- data.frame(foverlaps(x,y,by.x=c("scaffold","begin","end"),type="within"))
+```
+
+#Interactive Circos Plot
+
+```{r}
+#Subset chromosomes for circos plotting
+Ch1df = annotatedpool[grep("Ch1", annotatedpool[,1]),]
+Ch2df = annotatedpool[grep("Ch2", annotatedpool[,1]),]
+pHG1df = annotatedpool[grep("pHG1", annotatedpool[,1]),]
+
+#Define the genome
+RalsGenome = list("Ch1"=4052032,"Ch2"=2912490,"pHG1"=452156)
+
+#Format circos plot
+tracks = BioCircosTracklist()
+barcolor = c('#e41a1c','#4daf4a','#377eb8')
+
+#instantiate lists and values (bin width, graph range) to be used in the plotting loop
+binwid=20000
+startlist <- list(seq.int(0, unlist(RalsGenome[[1]]), by = binwid))
+endlist <- list(seq.int(binwid, unlist(RalsGenome[[1]])+binwid, by = binwid))
+
+dflist <- list(Ch1df,Ch2df,pHG1df)
+
+ReadsMax = 200000
+InsertionBinMax= 750
+GeneInsertionMax = 100
+
+tracks = BioCircosTracklist()
+barcolor = c('#e41a1c','#4daf4a','#377eb8')
+
+#Loop through chromosomes, producing each plot for each chromosome.
+for (i in 1:length(RalsGenome)){
+#For preset color palettes
+#barColor = colorRampPalette(brewer.pal(3,"Pastel2"))(length(RalsGenome))[i];
+#Using predecided color hash
+bcolor = barcolor[i]
+
+startlist[i] <- list(seq.int(0, unlist(RalsGenome[[i]]), by = binwid))
+endlist[i] <- list(seq.int(binwid, unlist(RalsGenome[[i]])+binwid, by = binwid))
+dflist[[i]]$bins <- cut(dflist[[i]]$pos, breaks = unlist(startlist[i]))
+
+#Circos bar graph of binned insertions
+tracks = tracks + BioCircosBarTrack(paste0("bars",i), chromosome = names(RalsGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(table(dflist[[i]]$bins))$Freq, labels=rep("Tn5 insertions",length(unique(dflist[[i]]$bins))), range=c(0,InsertionBinMax), color = bcolor)
+
+#Circos heat map of binned Illumina reads
+tracks = tracks + BioCircosHeatmapTrack("heatmap1", chromosome = names(RalsGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(aggregate(nTot ~ bins, data = dflist[[i]],sum))$nTot, labels=rep("Illumina reads",length(unique(dflist[[i]]$bins))), range=c(0,ReadsMax), minRadius = 0.3, maxRadius = 0.45)
+
+#Outer Circos heat map (by insertion number) displaying gene loci that contain insertions
+tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(RalsGenome)[i], starts = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$begin), ends = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$end), values = as.data.frame(table(na.omit(dflist[[i]]$desc)))$Freq, range=c(0,GeneInsertionMax), na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$desc), minRadius = 1.2, maxRadius = 1.5)
+}
+
+#Color the background of the bar graph
+tracks = tracks + BioCircosBackgroundTrack("bars_background",colors="#B3E6FF")
+```
+
+#Cupriavidus necator / Ralstonia eutropha RB-TnSeq Library
+```{r}
+#Plot with circos
+BioCircos(tracks,genomeFillColor = barcolor, genome = RalsGenome, genomeTicksDisplay=F,genomeLabelDy=0, genomeLabelTextSize="12pt", width=850,height=850)
+```
+
+
+All of this code can easily be rewritten for other RB-TnSeq libraries. For example, see below the creation of a similar graph for
+
+#Oligotropha carboxidovorans.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, echo = FALSE}
+setwd("~/Documents/HudsonLab/TnSeq4/Oli")
+poolfile <- read.csv(file="pool_file",header=TRUE,sep="\t",stringsAsFactors=FALSE)
+genesfile <- read.csv(file="genes.GC",header=TRUE,sep="\t",stringsAsFactors=FALSE)
+hitfile <- read.csv(file="pool_file.hit",header=TRUE,sep="\t",stringsAsFactors=FALSE)
+```
+#Information about the pool
+```{r}
+#Number of unique barcodes
+paste(poolfile$barcode %>% length, "unique barcodes in the pool")
+
+#Number of annotated genes in the organism
+paste(genesfile$locusId %>% length, "genes in this organism")
+
+#Number of genes with at least one transposon insertion
+paste(hitfile$sysName %>% length, "genes with one transposon within central 10-90% of bp")
+
+#Number of genes not hit by transposons
+paste((genesfile$locusId %>% length) - (hitfile$sysName %>% length), "genes without central insertions")
+```
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, echo = FALSE}
+# Subset pool data to reduce memory usage
+poolsubset <- poolfile %>% select(scaffold,pos,nTot)
+rm("poolfile")
+
+# Reformat genes.GC annotation to reduce algorithmic replacement load
+map2 <- data.frame(scaffold=c("NC_015684","NC_015689"),locusId=c("Ch1","pHCG3"),stringsAsFactors=FALSE)
+genessubset<-genesfile %>% select(scaffoldId,begin,end,strand,desc,GC)
+genessubset$length <- abs(genessubset$begin - genessubset$end)
+
+# Rename chromosomes in pool and annotation file
+
+genessubset<-
+genessubset %>%
+  rename(scaffold=scaffoldId)
+
+genessubset <-
+genessubset %>%
+  left_join(map2,by="scaffold") %>%
+  mutate(scaffold = locusId) %>%
+  select(-locusId)
+
+poolsubset <-
+poolsubset %>%
+  left_join(map2,by="scaffold") %>%
+  mutate(scaffold = locusId) %>%
+  select(-locusId)
+
+# Reformat and sort the pool file by position
+poolsubset <- poolsubset[order(poolsubset[,1],poolsubset[,2],decreasing=FALSE),]
+
+poolsubset$pos <- as.numeric(as.character(poolsubset$pos))
+x = data.table(poolsubset)
+y = data.table(genessubset)
+#dummy begin/end columns are created in the pool file to allow foverlap function
+x$begin <- x$pos
+x$end <- x$pos
+setkey(y,scaffold,begin,end)
+annotatedpool <- data.frame(foverlaps(x,y,by.x=c("scaffold","begin","end"),type="within"))
+```
+```{r}
+#Subset chromosomes for circos plotting
+Ch1df = annotatedpool[grep("Ch1", annotatedpool[,1]),]
+pHCG3df = annotatedpool[grep("pHCG3", annotatedpool[,1]),]
+
+#Define the genome
+OliGenome = list("Ch1"=3595748,"pHCG3"=133057)
+
+#Determine the maximum number of Illumina reads in the bins
+
+#Format circos plot
+tracks = BioCircosTracklist()
+barcolor = c('#e41a1c','#4daf4a')
+
+#instantiate lists to be used in plotting loop, decide bin sizes (in basepairs)
+binwid=20000
+startlist <- list(seq.int(0, unlist(OliGenome[[1]]), by = binwid))
+endlist <- list(seq.int(binwid, unlist(OliGenome[[1]])+binwid, by = binwid))
+
+dflist <- list(Ch1df,pHCG3df)
+
+ReadsMax = 200000
+InsertionBinMax= 1500
+GeneInsertionMax = 100
+
+tracks = BioCircosTracklist()
+barcolor = c('#e41a1c','#4daf4a','#377eb8')
+
+#Loop through chromosomes - WRITE A BUNCH OF TEXT HERE DESCRIBING THE CIRCOS FUNCTION!
+for (i in 1:length(OliGenome)){
+#For preset color palettes
+#barColor = colorRampPalette(brewer.pal(3,"Pastel2"))(length(OliGenome))[i];
+#Using predecided color hash
+bcolor = barcolor[i]
+
+startlist[i] <- list(seq.int(0, unlist(OliGenome[[i]]), by = binwid))
+endlist[i] <- list(seq.int(binwid, unlist(OliGenome[[i]])+binwid, by = binwid))
+dflist[[i]]$bins <- cut(dflist[[i]]$pos, breaks = unlist(startlist[i]))
+
+#Circos bar graph of binned insertions
+tracks = tracks + BioCircosBarTrack(paste0("bars",i), chromosome = names(OliGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(table(dflist[[i]]$bins))$Freq, labels=rep("Tn5 insertions",length(unique(dflist[[i]]$bins))), range=c(0,InsertionBinMax), color = bcolor)
+
+#Circos heat map of binned Illumina reads
+tracks = tracks + BioCircosHeatmapTrack("heatmap1", chromosome = names(OliGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(aggregate(nTot ~ bins, data = dflist[[i]],sum))$nTot, labels=rep("Illumina reads",length(unique(dflist[[i]]$bins))), range=c(0,ReadsMax), minRadius = 0.3, maxRadius = 0.45)
+
+#Circos bar graph of insertions binned by genes
+tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(OliGenome)[i], starts = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$begin), ends = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$end), values = as.data.frame(table(na.omit(dflist[[i]]$desc)))$Freq, range=c(0,GeneInsertionMax), labels = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$desc), minRadius = 1.2, maxRadius = 1.5)
+}
+
+#Color the background
+tracks = tracks + BioCircosBackgroundTrack("bars_background",colors="#B3E6FF")
+```
+#Oligotropha carboxidovorans RB-TnSeq Library
+```{r}
+#Plot with circos
+BioCircos(tracks,genomeFillColor = barcolor, genome = OliGenome, genomeTicksDisplay=F,genomeLabelDy=0, genomeLabelTextSize="12pt", width=850,height=850)
+```
