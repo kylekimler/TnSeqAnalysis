@@ -154,6 +154,31 @@ tracks = tracks + BioCircosBackgroundTrack("bars_background",colors="#B3E6FF")
 BioCircos(tracks,genomeFillColor = barcolor, genome = RalsGenome, genomeTicksDisplay=F,genomeLabelDy=0, genomeLabelTextSize="12pt", width=850,height=850)
 ```
 
+The Circos graph displays a clear bias for both transposon insertion likelihood and Illumina read density for the termini of the chromosomes, a bias towards insertion in pHG1 and against insertion in Ch2. Sources of bias in RB-TnSeq library production include transposon insertion site basepair preferences, and the copy number of chromosomes and plasmids within the organism. These biases must be described and accounted for in downstream analyses.
+
+One method to visualize the reliability of the library is to determine the likelihood of transposon insertion into the chromosomes taking into account each of these biases by determining an calculating the insertion density along each chromosome in rolling windows. Next, several randomly sampled pool files can be created to compare against the original. This method takes into account only the greatest contributor to insertion bias - the position on the genome. The rolling windows decrease the chance of overfitting. A better method would be to produce an HMM of insertion likelihood at each basepair of the genome, allowing incorporation of basepair bias (as displayed in the HMMBuild method above) in addition to rolling window insertion chance.
+
+#Calculation of rolling insertion density
+
+
+
+#Creation of random transposon insertion libraries
+
+#Calculation of predicted necessary library density for statistical determination of each gene's essentiality.
+Several simulated datasets can then be compared as negative controls against the experimental dataset to determine the likelihood of each gene's essentiality.
+
+Once the dataset is validated as a complete resource, we can begin to look closer at the essential genes. It is possible that the organism's computational annotations are wrong. First, we will visualize the annotation of essential genes by producing plots describing GO or COG enrichment among genes not hit by transposons.
+
+Next, we will pick out and list genes belonging to surprising COG/GO terms
+Then, we pick from the hit pool belonging to essential terms.
+
+The first, most obvious analysis in a TnSeq experiment is the determination of gene essentiality. Since Ralstonia eutropha is a mixotrophic organism and the library was grown in LB, only heterotrophic genes should be essential. We found one essential gene, CODH, could be required for the sequestration of oxygen during respiration.
+
+#Determination of Gene Essentiality
+
+To visualize the annotation and essentiality of our organism's genome, we first produce plots describing GO enrichment among genes not hit by transposons.
+
+
 
 All of this code can easily be rewritten for other RB-TnSeq libraries. For example, see below the creation of a similar graph for
 
@@ -248,7 +273,7 @@ GeneInsertionMax = 100
 tracks = BioCircosTracklist()
 barcolor = c('#e41a1c','#4daf4a','#377eb8')
 
-#Loop through chromosomes - WRITE A BUNCH OF TEXT HERE DESCRIBING THE CIRCOS FUNCTION!
+#Loop through chromosomes
 for (i in 1:length(OliGenome)){
 #For preset color palettes
 #barColor = colorRampPalette(brewer.pal(3,"Pastel2"))(length(OliGenome))[i];
