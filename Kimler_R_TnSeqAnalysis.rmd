@@ -1,5 +1,5 @@
 ---
-title: "RB-TnSeq library production analysis"
+title: "RB-TnSeq Library Production Analysis"
 output: html_document
 ---
 
@@ -12,6 +12,7 @@ The first part of this document (link) parses the pooled mutants to visualize tr
 ```{r, results = 'hide', message = FALSE, warning = FALSE}
 # Load packages
 
+library(rmarkdown)
 library(BioCircos)
 library(RColorBrewer)
 library(tidyverse)
@@ -25,13 +26,14 @@ Read the data from TnSeq Pipeline parsing output. Pool_file contains loci of ins
 
 ```{r}
 #Move to the working directory of the TnSeq pipeline output
-setwd("~/Documents/HudsonLab/TnSeq4/Re")
+setwd("~/Kyle/RalstoniaTnSeq")
 poolfile <- read.csv(file="pool_file",header=TRUE,sep="\t",stringsAsFactors=FALSE)
 genesfile <- read.csv(file="genes.GC",header=TRUE,sep="\t",stringsAsFactors=FALSE)
 hitfile <- read.csv(file="pool_file.hit",header=TRUE,sep="\t",stringsAsFactors=FALSE)
 ```
+
 #Step 2: Information about the pool
-```{r}
+```{r, echo= FALSE}
 #Number of unique barcodes
 paste(poolfile$barcode %>% length, "unique barcodes in the pool")
 
@@ -43,7 +45,10 @@ paste(hitfile$sysName %>% length, "genes with one transposon within central 10-9
 
 #Number of genes not hit by transposons
 paste((genesfile$locusId %>% length) - (hitfile$sysName %>% length), "genes without central insertions")
+
+
 ```
+
 #Step 3: Reformat annotations
 ```{r}
 # Subset pool data to reduce memory usage
@@ -51,9 +56,10 @@ poolsubset <- poolfile %>% select(scaffold,pos,nTot)
 rm("poolfile")
 
 # Reformat genes.GC annotation to reduce algorithmic replacement load
-map2 <- data.frame(scaffold=c("NC_008313","NC_008314","AY305378"),locusId=c("Ch1","Ch2","pHG1"),stringsAsFactors=FALSE)
+map2 <- data.frame(scaffold=c("NC_008313","NC_008314","AY305378"),id=c("Ch1","Ch2","pHG1"),stringsAsFactors=FALSE)
 genessubset<-genesfile %>% select(scaffoldId,begin,end,strand,desc,GC)
 genessubset$length <- abs(genessubset$begin - genessubset$end)
+hitssubset<-hitfile %>% select(scaffoldId,locusId,desc,nStrains,nReads)
 ```
 
 Next, tables are reformatted and reannotated to allow joining.
@@ -68,14 +74,21 @@ genessubset %>%
 genessubset <-
 genessubset %>%
   left_join(map2,by="scaffold") %>%
-  mutate(scaffold = locusId) %>%
-  select(-locusId)
+  mutate(scaffold = id) %>%
+  select(-id)
 
 poolsubset <-
 poolsubset %>%
   left_join(map2,by="scaffold") %>%
-  mutate(scaffold = locusId) %>%
-  select(-locusId)
+  mutate(scaffold = id) %>%
+  select(-id)
+
+hitssubset <-
+hitssubset %>%
+  rename(scaffold=scaffoldId) %>%
+  left_join(map2,by="scaffold") %>%
+  mutate(scaffold = id) %>%
+  select(-id)
 
 # Reformat and sort the pool file by position
 poolsubset <- poolsubset[order(poolsubset[,1],poolsubset[,2],decreasing=FALSE),]
@@ -101,20 +114,27 @@ annotatedpool <- data.frame(foverlaps(x,y,by.x=c("scaffold","begin","end"),type=
 Ch1df = annotatedpool[grep("Ch1", annotatedpool[,1]),]
 Ch2df = annotatedpool[grep("Ch2", annotatedpool[,1]),]
 pHG1df = annotatedpool[grep("pHG1", annotatedpool[,1]),]
+Ch1Genes = genessubset[grep("Ch1", genessubset[,1]),]
+Ch2Genes = genessubset[grep("Ch2", genessubset[,1]),]
+pHG1Genes = genessubset[grep("pHG1", genessubset[,1]),]
 
 #Define the genome
-RalsGenome = list("Ch1"=4052032,"Ch2"=2912490,"pHG1"=452156)
+Genome = list("Ch1"=4052032,"Ch2"=2912490,"pHG1"=452156)
 
 #Format circos plot
 tracks = BioCircosTracklist()
 barcolor = c('#e41a1c','#4daf4a','#377eb8')
 
+dflist <- list(Ch1df,Ch2df,pHG1df)
+geneslist <- list(Ch1Genes,Ch2Genes,pHG1Genes)
+
 #instantiate lists and values (bin width, graph range) to be used in the plotting loop
 binwid=20000
-startlist <- list(seq.int(0, unlist(RalsGenome[[1]]), by = binwid))
-endlist <- list(seq.int(binwid, unlist(RalsGenome[[1]])+binwid, by = binwid))
+startlist <- list(seq.int(0, unlist(Genome[[1]]), by = binwid))
+endlist <- list(seq.int(binwid, unlist(Genome[[1]])+binwid, by = binwid))
+genesbreaks <- rbind(geneslist[[1]]$begin,geneslist[[1]]$end)
 
-dflist <- list(Ch1df,Ch2df,pHG1df)
+
 
 ReadsMax = 200000
 InsertionBinMax= 750
@@ -124,24 +144,42 @@ tracks = BioCircosTracklist()
 barcolor = c('#e41a1c','#4daf4a','#377eb8')
 
 #Loop through chromosomes, producing each plot for each chromosome.
-for (i in 1:length(RalsGenome)){
+for (i in 1:length(Genome)){
 #For preset color palettes
-#barColor = colorRampPalette(brewer.pal(3,"Pastel2"))(length(RalsGenome))[i];
+#barColor = colorRampPalette(brewer.pal(3,"Pastel2"))(length(Genome))[i];
 #Using predecided color hash
 bcolor = barcolor[i]
 
-startlist[i] <- list(seq.int(0, unlist(RalsGenome[[i]]), by = binwid))
-endlist[i] <- list(seq.int(binwid, unlist(RalsGenome[[i]])+binwid, by = binwid))
+#create arbitrary bins
+startlist[i] <- list(seq.int(0, unlist(Genome[[i]]), by = binwid))
+endlist[i] <- list(seq.int(binwid, unlist(Genome[[i]])+binwid, by = binwid))
+#create gene-specific bins, accounting for the "0" edge case. intergenic regions are given their own bins, called "intergenic"
+genesbreaks <- c(0,rbind(geneslist[[i]]$begin,geneslist[[i]]$end))
+#account for "edge cases" where genes overlap by attributing insertions to the first 'genological' gene
+for(z in 2:length(genesbreaks)){
+  if(genesbreaks[z] < genesbreaks[z-1]){
+    genesbreaks[z]=genesbreaks[z-1]
+  }
+  if(genesbreaks[z] == genesbreaks[z-1]){
+    genesbreaks[z]=genesbreaks[z-1]+1
+  }
+}
+dflist[[i]]$genesbins <- cut(dflist[[i]]$pos, breaks = unlist(genesbreaks))
 dflist[[i]]$bins <- cut(dflist[[i]]$pos, breaks = unlist(startlist[i]))
 
+dflist[[i]]$length = dflist[[i]]$end - dflist[[i]]$begin
+
 #Circos bar graph of binned insertions
-tracks = tracks + BioCircosBarTrack(paste0("bars",i), chromosome = names(RalsGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(table(dflist[[i]]$bins))$Freq, labels=rep("Tn5 insertions",length(unique(dflist[[i]]$bins))), range=c(0,InsertionBinMax), color = bcolor)
+tracks = tracks + BioCircosBarTrack(paste0("bars",i), chromosome = names(Genome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(table(dflist[[i]]$bins))$Freq, labels=rep("Tn5 insertions",length(unique(dflist[[i]]$bins))), range=c(0,InsertionBinMax), color = bcolor)
 
-#Circos heat map of binned Illumina reads
-tracks = tracks + BioCircosHeatmapTrack("heatmap1", chromosome = names(RalsGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(aggregate(nTot ~ bins, data = dflist[[i]],sum))$nTot, labels=rep("Illumina reads",length(unique(dflist[[i]]$bins))), range=c(0,ReadsMax), minRadius = 0.3, maxRadius = 0.45)
+#Inner circos heat map of binned Illumina reads
+tracks = tracks + BioCircosHeatmapTrack("heatmap1", chromosome = names(Genome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(aggregate(nTot ~ bins, data = dflist[[i]],sum))$nTot, labels=rep("Illumina reads",length(unique(dflist[[i]]$bins))), range=c(0,ReadsMax), minRadius = 0.3, maxRadius = 0.45)
 
-#Outer Circos heat map (by insertion number) displaying gene loci that contain insertions
-tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(RalsGenome)[i], starts = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$begin), ends = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$end), values = as.data.frame(table(na.omit(dflist[[i]]$desc)))$Freq, range=c(0,GeneInsertionMax), na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$desc), minRadius = 1.2, maxRadius = 1.5)
+#Outer Circos heat map (by read number) binning data by genes - high computational load. Displays reads
+#tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(Genome)[i], starts = head(genesbreaks,-1), ends = tail(genesbreaks,-1), values = as.data.frame(aggregate(nTot ~ genesbins, data = dflist[[i]],sum))$nTot, range=c(0,5000), labels = c(unlist(rbind("intergenic", geneslist[[i]]$desc)),"intergenic"), minRadius = 1.2, maxRadius = 1.5)
+
+#Circos heat map of insertions per gene/intergenic region, displayed on the outmost ring... requires a higher graph resolution to distinguish bins.
+tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(Genome)[i], starts = head(genesbreaks,-1), ends = tail(genesbreaks,-1), values=as.data.frame(table(dflist[[i]]$genesbins))$Freq, range=c(0,50), labels = c(unlist(rbind("intergenic", geneslist[[i]]$desc)),"intergenic"), minRadius = 1.2, maxRadius = 1.5)
 }
 
 #Color the background of the bar graph
@@ -151,47 +189,190 @@ tracks = tracks + BioCircosBackgroundTrack("bars_background",colors="#B3E6FF")
 #Cupriavidus necator / Ralstonia eutropha RB-TnSeq Library
 ```{r}
 #Plot with circos
-BioCircos(tracks,genomeFillColor = barcolor, genome = RalsGenome, genomeTicksDisplay=F,genomeLabelDy=0, genomeLabelTextSize="12pt", width=850,height=850)
+BioCircos(tracks,genomeFillColor = barcolor, genome = Genome, genomeTicksDisplay=F,genomeLabelDy=0, genomeLabelTextSize="12pt", width=850,height=850)
+
 ```
 
-The Circos graph displays a clear bias for both transposon insertion likelihood and Illumina read density for the termini of the chromosomes, a bias towards insertion in pHG1 and against insertion in Ch2. Sources of bias in RB-TnSeq library production include transposon insertion site basepair preferences, and the copy number of chromosomes and plasmids within the organism. These biases must be described and accounted for in downstream analyses.
+The Circos graph displays a clear bias for both transposon insertion likelihood and Illumina read density for the termini of the chromosomes, a bias towards insertion in pHG1 and against insertion in Ch2. Sources of bias in RB-TnSeq library production include transposon insertion site basepair preferences, and the copy number of chromosomes and plasmids within the organism. These biases must be described and accounted for in downstream analyses. The next step in the process is statistical treatment of essentiality.
 
-One method to visualize the reliability of the library is to determine the likelihood of transposon insertion into the chromosomes taking into account each of these biases by determining an calculating the insertion density along each chromosome in rolling windows. Next, several randomly sampled pool files can be created to compare against the original. This method takes into account only the greatest contributor to insertion bias - the position on the genome. The rolling windows decrease the chance of overfitting. A better method would be to produce an HMM of insertion likelihood at each basepair of the genome, allowing incorporation of basepair bias (as displayed in the HMMBuild method above) in addition to rolling window insertion chance.
+One method to visualize the reliability of the library is to determine the likelihood of transposon insertion into the chromosomes taking into account each of these biases by calculating the insertion density along each chromosome in rolling windows. Next, several randomly sampled pool files can be created to compare against the original. Rolling window averages decrease the chance of overfitting, depending on window size. Some scientists produce an HMM with essential and non-essential states, I think the best method would be a combination of both simulations and the construction of an HMM that calculates a scalar (insertion density) by incorporating sliding windows of various sizes and local sequence content of insertion sites.
 
-#Calculation of rolling insertion density
+```{r, message = FALSE, warning = FALSE}
+insdf = list()
+SimWithBiasdf = data.frame()
+SimRandomdf = data.frame()
+testing2 = data.frame()
+statsStated = list()
+stats = list()
+#loop through the chromosomes
+for(i in 1:length(Genome)){
+  insertionchr <- as.data.frame(table(factor(dflist[[i]]$pos, levels = 0:as.numeric(Genome[i])))) %>% rename(pos=Var1) %>% mutate(pos=as.numeric(pos))
+  insertionchr$chr <- i
+  #calculate insertion density in "rolling windows" of 200bp, 1 bp at a time.
+  insertionchr$ExpRollInsertions = rollapply(insertionchr$Freq,width=200,FUN=mean,by=1,partial=TRUE)
+
+  samplingdf <- insertionchr
+  #Resample the dataset one chromosome at a time by producing simulated insertions based on the rolling insertion density calculation. With 200bp sliding windows, this produces simulated datasets overfit to the experimental data, accounting for local and distant contributors to bias, and random biases. Do so for simulated libraries of 10k - 100k insertions within each chromosome.
+  for(k in seq.int(10000, 100000, by = 10000)){
+    kk <- paste0(k," samples")
+    simnum <- paste0(k," simulated insertions")
+    simulatedf <- data.frame()
+    simulatedf <- sample(insertionchr$pos, k, replace=TRUE, prob=insertionchr$ExpRollInsertions) %>% table %>% enframe %>% rename(pos=name) %>% mutate(pos=as.numeric(pos)) %>% right_join(insertionchr, by="pos")
+
+    simulatedf <- simulatedf %>% mutate(value=replace_na(simulatedf$value,0))
+
+    #calculate insertion density in gene-size chunks for the simulation
+    rollingdensity <- rollapply(simulatedf$value,width=385,FUN=mean,by=192,partial=TRUE)
+    #produce an empirical cumulative distribution function of the insertion density across this particular chromosome
+    percent0 <- ecdf(rollingdensity)
+    #save the percent chance of 0 insertion density in a gene sized chunk with k simulated insertions
+    stats <- c(stats,percent0(0))
+    #as string
+    statsStated <- c(statsStated,paste("Simulation using bias shows", percent0(0)*100, "% essential in", simnum, "in chromosome", i))
+
+    simulatedf$rolling = rollapply(simulatedf$value,width=200,FUN=mean,by=1,partial=TRUE)
+
+    simulatedf <- simulatedf %>% mutate(value=replace_na(simulatedf$value,0)) %>% rename(!!simnum := rolling)
+
+    samplingdf <- merge(samplingdf,as.data.frame(simulatedf))
+    }
+
+  #Resample the dataset a second time, with a true random insertion rate, should this be done including overall positional bias by normalizing (as in TraDIS toolkit? Parkhill, Bioinformatics 2016). Do so for simulated libraries of 10k - 100k insertions in each chromosome.
+  samplingdf2 <- insertionchr
+  for(k in seq.int(10000, 100000, by = 10000)){
+    kk <- paste0(k," samples")
+    simnum <- paste0(k," simulated insertions")
+    simulatedf <- data.frame()
+    simulatedf <- sample(insertionchr$pos, k, replace=TRUE) %>% table %>% enframe %>% rename(pos=name) %>% mutate(pos=as.numeric(pos)) %>% right_join(insertionchr, by="pos")
+
+    simulatedf <- simulatedf %>% mutate(value=replace_na(simulatedf$value,0))
+
+    #calculate 0 insertion density tail of rolling insertion density distribution in gene-sized windows of 385bp
+    rollingdensity <- rollapply(simulatedf$value,width=385,FUN=mean,by=192,partial=TRUE)
+    percent0 <- ecdf(rollingdensity)
+    statsStated <- c(statsStated,paste("Random simulation shows", percent0(0)*100, "% essential in", simnum, "in chromosome", i))
+
+    #calculate insertion density in rolling windows for the simulated dataset
+    simulatedf$rolling = rollapply(simulatedf$value,width=200,FUN=mean,by=1,partial=TRUE)
+
+    #simulatedf <- simulatedf %>% mutate(value=replace_na(simulatedf$value,0)) %>% rename(!!kk := value, !!simnum := rolling)
+
+    simulatedf <- simulatedf %>% mutate(value=replace_na(simulatedf$value,0)) %>% rename(!!simnum := rolling)
+
+    samplingdf2 <- merge(samplingdf2,as.data.frame(simulatedf))
+      }
+
+  samplingdfgathd <- gather(samplingdf, samplenum, ins, -pos, -chr)
+  samplingdfgathd2 <- gather(samplingdf2, samplenum, ins, -pos, -chr)
+
+  SimWithBiasdf <- rbind(SimWithBiasdf,samplingdfgathd)
+  SimRandomdf <- rbind(SimRandomdf,samplingdfgathd2)
+  testing2 <- rbind(testing2, insertionchr)
+}
+
+SimWithBiasdf <- SimWithBiasdf %>% filter(samplenum!="Freq")
+
+SimRandomdf <- SimRandomdf %>% filter(samplenum!="Freq")
+
+write.csv(stats,file=paste0("Simulation0TailStats",Sys.time()))
+write.csv(SimWithBiasdf, file=paste0("SimWithBias",Sys.time()))
+write.csv(SimRandomdf, file=paste0("RandomSimulation",Sys.time()))
+```
+
+## Plotting simulations against experimental data. Let's look specifically at Ch2 and simulations around the experimental dataset and the ideal dataset.
+
+```{r, warning=FALSE}
+
+#Simulations using bias across chromosomes, displayed as a line graph of insertion density in 200bp windows.
+#Fig <- ggplot(data=SimWithBiasdf,aes(x=pos,y=ins, color=chr))
+#Fig <- Fig + geom_line() + facet_grid(chr ~ samplenum, scales="free_x") + scale_y_continuous() + scale_color_manual(values=c("coral", "seagreen", "midnightblue"))
+
+#This doesn't look great, so we will bin the line graph into hex
+
+#Visualizing simulations using bias across chromosomes, displayed as insertion density in 200bp windows, line graph binned into hexagons for easier viewing
+
+Figframe <- SimWithBiasdf %>% filter(chr==2) %>% filter(samplenum==c('20000 simulated insertions','80000 simulated insertions'))
+Figframe <- Figframe %>% mutate(graphwidth=max(pos))
+Fig <- ggplot(data=Figframe, aes(x=pos, y=ins)) + geom_hex() + geom_blank(aes(x=graphwidth)) + facet_wrap(. ~ samplenum) + ylab("Insertion Density (385bp windows)") + xlab("chromosome position (bp)")
+Fig
+
+#Hex graphs are high computational load. We need a better way of visualizing this data. Will try in a StreamLit app.
+
+#Visualizing random simulations across chromosomes, displayed as rolling density in 200bp windows, line graph binned into hexagons for easier viewing. Difficult to see much but noise.
+Figframe <- SimRandomdf %>% filter(chr==2) %>% filter(samplenum==c('20000 simulated insertions','80000 simulated insertions'))
+Figframe <- Figframe %>% mutate(graphwidth=max(pos))
+Fig <- ggplot(data=Figframe, aes(x=pos, y=ins)) + geom_hex() + geom_blank(aes(x=graphwidth)) + facet_wrap(. ~ samplenum) + ylab("Insertion Density (385bp windows)") + xlab("chromosome position (bp)")
+Fig
+
+#Whole dataset
+#Figframe <- SimRandomdf %>% filter(samplenum!="value")
+#Fig <- ggplot(data=Figframe, aes(x=pos, y=ins, color=chr)) + geom_hex() + facet_wrap(chr ~ samplenum, scales="free") + scale_y_continuous(trans='log10') + scale_color_manual(values=c("coral", "seagreen", "midnightblue"))
+
+# Next let's plot the distribution of insertion densities across chromosome 2. Then we can integrate the area under the curve for the areas with 0 insertion density to find the chance of an "essential" call first with bias:
+Figframe <- SimWithBiasdf %>% filter(chr==2) %>% filter(samplenum==c('20000 simulated insertions','80000 simulated insertions'))
+Fig <- ggplot(data=Figframe, aes(x=ins))
+Fig <- Fig + geom_density(aes(y=..scaled..),bw = .003) + facet_grid(. ~ samplenum) + scale_y_continuous() + xlim(c(0,0.2)) + xlab("insertion density (385bp windows)") + ylab("Normalized frequency of densities") + ggtitle("Distribution of Insertions simulated with 200bp rolling bias averaged as rolling windows")
+Fig
+
+#Entire dataset. Slow - too much data.
+#Fig <- ggplot(data=SimWithBiasdf, aes(x=ins,color=chr))
+#Fig <- Fig + geom_density(aes(y=..scaled..)) + facet_grid(chr ~ samplenum) + scale_y_continuous() + scale_color_manual(values=c("coral", "seagreen", "midnightblue")) + xlim(c(0,0.2))
+
+#And with randomly simulated insertions:
+Figframe <- SimRandomdf %>% filter(chr==2) %>% filter(samplenum==c('20000 simulated insertions','80000 simulated insertions'))
+Fig <- ggplot(data=Figframe, aes(x=ins))
+Fig <- Fig + geom_density(aes(y=..scaled..),bw = .003) + facet_grid(. ~ samplenum) + scale_y_continuous() + xlim(c(0,0.2)) + xlab("insertion density (385bp windows)") + ylab("Normalized frequency of densities") + ggtitle("Distribution of Randomly simulated Insertions averaged as rolling windows")
+Fig
+
+#Entire dataset. Slow - too much data
+#Fig <- ggplot(data=SimRandomdf, aes(x=ins,color=chr))
+#Fig <- Fig + geom_density(aes(y=..scaled..)) + facet_grid(chr ~ samplenum) + scale_y_continuous() + scale_color_manual(values=c("coral", "seagreen", "midnightblue")) + xlim(c(0,0.2))
+
+```
 
 
+We can see and calculate that completely random transposon insertion creates a distribution with a 5% likelihood of 0 insertions within a gene-sized chunk at ~30k insertions in the large chromosomes 1 and 2, while simulated insertion biased by empirical data levels off at around 70k insertions per chromosome.
 
-#Creation of random transposon insertion libraries
+As displayed above, our pool in the Hudson lab contains 70875 unique barcodes. Of these,
+```{r}
 
-#Calculation of predicted necessary library density for statistical determination of each gene's essentiality.
-Several simulated datasets can then be compared as negative controls against the experimental dataset to determine the likelihood of each gene's essentiality.
+#Number in chromosome 1
+paste(poolsubset %>% filter(scaffold=='Ch1') %>% nrow)
 
-Once the dataset is validated as a complete resource, we can begin to look closer at the essential genes. It is possible that the organism's computational annotations are wrong. First, we will visualize the annotation of essential genes by producing plots describing GO or COG enrichment among genes not hit by transposons.
+#Number in chromosome 2
+paste(poolsubset %>% filter(scaffold=='Ch2') %>% nrow)
 
-Next, we will pick out and list genes belonging to surprising COG/GO terms
-Then, we pick from the hit pool belonging to essential terms.
+#Number in pHG1
+paste(poolsubset %>% filter(scaffold=='pHG1') %>% nrow)
 
-The first, most obvious analysis in a TnSeq experiment is the determination of gene essentiality. Since Ralstonia eutropha is a mixotrophic organism and the library was grown in LB, only heterotrophic genes should be essential. We found one essential gene, CODH, could be required for the sequestration of oxygen during respiration.
+```
+```{r, echo = FALSE, warning = FALSE}
+print(statsStated[c(4,5,14,15,22,32,41,51)])
 
-#Determination of Gene Essentiality
+```
 
-To visualize the annotation and essentiality of our organism's genome, we first produce plots describing GO enrichment among genes not hit by transposons.
-
-
-
-All of this code can easily be rewritten for other RB-TnSeq libraries. For example, see below the creation of a similar graph for
-
-#Oligotropha carboxidovorans.
 
 ```{r, results = 'hide', message = FALSE, warning = FALSE, echo = FALSE}
-setwd("~/Documents/HudsonLab/TnSeq4/Oli")
+#ggsave("InsertionDensityRandDistro.png",plot=Fig,dpi=2000)
+#ggsave("InsertionDensityBiasSamplingChromosomesHex30kbp.png", plot=last_plot(), dpi=2000)
+
+```
+
+
+
+
+All of this code can easily be rewritten for other RB-TnSeq libraries. For example, see below the creation of a circos visualization graph for
+
+## Oligotropha carboxidovorans.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE, echo = FALSE}
+setwd("~/Kyle/Oli")
 poolfile <- read.csv(file="pool_file",header=TRUE,sep="\t",stringsAsFactors=FALSE)
 genesfile <- read.csv(file="genes.GC",header=TRUE,sep="\t",stringsAsFactors=FALSE)
 hitfile <- read.csv(file="pool_file.hit",header=TRUE,sep="\t",stringsAsFactors=FALSE)
 ```
 #Information about the pool
-```{r}
+```{r, echo= FALSE}
 #Number of unique barcodes
 paste(poolfile$barcode %>% length, "unique barcodes in the pool")
 
@@ -204,16 +385,17 @@ paste(hitfile$sysName %>% length, "genes with one transposon within central 10-9
 #Number of genes not hit by transposons
 paste((genesfile$locusId %>% length) - (hitfile$sysName %>% length), "genes without central insertions")
 ```
-
+#new version
 ```{r, results = 'hide', message = FALSE, warning = FALSE, echo = FALSE}
-# Subset pool data to reduce memory usage
 poolsubset <- poolfile %>% select(scaffold,pos,nTot)
 rm("poolfile")
 
 # Reformat genes.GC annotation to reduce algorithmic replacement load
-map2 <- data.frame(scaffold=c("NC_015684","NC_015689"),locusId=c("Ch1","pHCG3"),stringsAsFactors=FALSE)
+map2 <- data.frame(scaffold=c("NC_015684","NC_015689"),id=c("Ch1","pHCG3"),stringsAsFactors=FALSE)
+
 genessubset<-genesfile %>% select(scaffoldId,begin,end,strand,desc,GC)
 genessubset$length <- abs(genessubset$begin - genessubset$end)
+hitssubset<-hitfile %>% select(scaffoldId,locusId,desc,nStrains,nReads)
 
 # Rename chromosomes in pool and annotation file
 
@@ -224,14 +406,21 @@ genessubset %>%
 genessubset <-
 genessubset %>%
   left_join(map2,by="scaffold") %>%
-  mutate(scaffold = locusId) %>%
-  select(-locusId)
+  mutate(scaffold = id) %>%
+  select(-id)
 
 poolsubset <-
 poolsubset %>%
   left_join(map2,by="scaffold") %>%
-  mutate(scaffold = locusId) %>%
-  select(-locusId)
+  mutate(scaffold = id) %>%
+  select(-id)
+
+hitssubset <-
+hitssubset %>%
+  rename(scaffold=scaffoldId) %>%
+  left_join(map2,by="scaffold") %>%
+  mutate(scaffold = id) %>%
+  select(-id)
 
 # Reformat and sort the pool file by position
 poolsubset <- poolsubset[order(poolsubset[,1],poolsubset[,2],decreasing=FALSE),]
@@ -244,61 +433,87 @@ x$begin <- x$pos
 x$end <- x$pos
 setkey(y,scaffold,begin,end)
 annotatedpool <- data.frame(foverlaps(x,y,by.x=c("scaffold","begin","end"),type="within"))
-```
-```{r}
+
 #Subset chromosomes for circos plotting
 Ch1df = annotatedpool[grep("Ch1", annotatedpool[,1]),]
 pHCG3df = annotatedpool[grep("pHCG3", annotatedpool[,1]),]
 
-#Define the genome
-OliGenome = list("Ch1"=3595748,"pHCG3"=133057)
+Ch1Genes = genessubset[grep("Ch1", genessubset[,1]),]
+pHCG3Genes = genessubset[grep("pHCG3", genessubset[,1]),]
 
-#Determine the maximum number of Illumina reads in the bins
+
+#Define the genome
+Genome = list("Ch1"=3595748,"pHCG3"=133057)
 
 #Format circos plot
 tracks = BioCircosTracklist()
-barcolor = c('#e41a1c','#4daf4a')
-
-#instantiate lists to be used in plotting loop, decide bin sizes (in basepairs)
-binwid=20000
-startlist <- list(seq.int(0, unlist(OliGenome[[1]]), by = binwid))
-endlist <- list(seq.int(binwid, unlist(OliGenome[[1]])+binwid, by = binwid))
+barcolor = c('#e41a1c','#4daf4a','#377eb8')
 
 dflist <- list(Ch1df,pHCG3df)
+geneslist <- list(Ch1Genes,pHCG3Genes)
+
+#instantiate lists and values (bin width, graph range) to be used in the plotting loop
+binwid=20000
+startlist <- list(seq.int(0, unlist(Genome[[1]]), by = binwid))
+endlist <- list(seq.int(binwid, unlist(Genome[[1]])+binwid, by = binwid))
+genesbreaks <- rbind(geneslist[[1]]$begin,geneslist[[1]]$end)
+
+
 
 ReadsMax = 200000
-InsertionBinMax= 1500
-GeneInsertionMax = 100
+InsertionBinMax= 2000
+GeneInsertionMax = 40
 
 tracks = BioCircosTracklist()
 barcolor = c('#e41a1c','#4daf4a','#377eb8')
 
-#Loop through chromosomes
-for (i in 1:length(OliGenome)){
+#Loop through chromosomes, producing each plot for each chromosome.
+for (i in 1:length(Genome)){
 #For preset color palettes
-#barColor = colorRampPalette(brewer.pal(3,"Pastel2"))(length(OliGenome))[i];
+#barColor = colorRampPalette(brewer.pal(3,"Pastel2"))(length(Genome))[i];
 #Using predecided color hash
 bcolor = barcolor[i]
 
-startlist[i] <- list(seq.int(0, unlist(OliGenome[[i]]), by = binwid))
-endlist[i] <- list(seq.int(binwid, unlist(OliGenome[[i]])+binwid, by = binwid))
+startlist[i] <- list(seq.int(0, unlist(Genome[[i]]), by = binwid))
+endlist[i] <- list(seq.int(binwid, unlist(Genome[[i]])+binwid, by = binwid))
+genesbreaks <- c(0,rbind(geneslist[[i]]$begin,geneslist[[i]]$end))
+for(z in 2:length(genesbreaks)){
+  if(genesbreaks[z] < genesbreaks[z-1]){
+    genesbreaks[z]=genesbreaks[z-1]
+  }
+  if(genesbreaks[z] == genesbreaks[z-1]){
+    genesbreaks[z]=genesbreaks[z-1]+1
+  }
+}
+dflist[[i]]$genesbins <- cut(dflist[[i]]$pos, breaks = unlist(genesbreaks))
 dflist[[i]]$bins <- cut(dflist[[i]]$pos, breaks = unlist(startlist[i]))
 
+dflist[[i]]$length = dflist[[i]]$end - dflist[[i]]$begin
+
 #Circos bar graph of binned insertions
-tracks = tracks + BioCircosBarTrack(paste0("bars",i), chromosome = names(OliGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(table(dflist[[i]]$bins))$Freq, labels=rep("Tn5 insertions",length(unique(dflist[[i]]$bins))), range=c(0,InsertionBinMax), color = bcolor)
+tracks = tracks + BioCircosBarTrack(paste0("bars",i), chromosome = names(Genome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(table(dflist[[i]]$bins))$Freq, labels=rep("Tn5 insertions",length(unique(dflist[[i]]$bins))), range=c(0,InsertionBinMax), color = bcolor)
 
 #Circos heat map of binned Illumina reads
-tracks = tracks + BioCircosHeatmapTrack("heatmap1", chromosome = names(OliGenome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(aggregate(nTot ~ bins, data = dflist[[i]],sum))$nTot, labels=rep("Illumina reads",length(unique(dflist[[i]]$bins))), range=c(0,ReadsMax), minRadius = 0.3, maxRadius = 0.45)
+tracks = tracks + BioCircosHeatmapTrack("heatmap1", chromosome = names(Genome)[i], starts =startlist[[i]], ends=endlist[[i]], values=as.data.frame(aggregate(nTot ~ bins, data = dflist[[i]],sum))$nTot, labels=rep("Illumina reads",length(unique(dflist[[i]]$bins))), range=c(0,ReadsMax), minRadius = 0.3, maxRadius = 0.45)
 
-#Circos bar graph of insertions binned by genes
-tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(OliGenome)[i], starts = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$begin), ends = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$end), values = as.data.frame(table(na.omit(dflist[[i]]$desc)))$Freq, range=c(0,GeneInsertionMax), labels = na.omit(dflist[[i]][!duplicated(dflist[[i]]$desc),]$desc), minRadius = 1.2, maxRadius = 1.5)
+#Outer Circos heat map (by read number) binning data by genes - high computational load. Displays reads
+
+#tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(Genome)[i], starts = head(genesbreaks,-1), ends = tail(genesbreaks,-1), values = as.data.frame(aggregate(nTot ~ genesbins, data = dflist[[i]],sum))$nTot, range=c(0,5000), labels = c(unlist(rbind("intergenic", geneslist[[i]]$desc)),"intergenic"), minRadius = 1.2, maxRadius = 1.5)
+
+#Genes for insertions
+tracks = tracks + BioCircosHeatmapTrack("heatmap2", chromosome = names(Genome)[i], starts = head(genesbreaks,-1), ends = tail(genesbreaks,-1), values=as.data.frame(table(dflist[[i]]$genesbins))$Freq, range=c(0,50), labels = c(unlist(rbind("intergenic", geneslist[[i]]$desc)),"intergenic"), minRadius = 1.2, maxRadius = 1.5)
 }
 
-#Color the background
+#Color the background of the bar graph
 tracks = tracks + BioCircosBackgroundTrack("bars_background",colors="#B3E6FF")
+
 ```
-#Oligotropha carboxidovorans RB-TnSeq Library
+
+## Oligotropha carboxidovorans RB-TnSeq Library
 ```{r}
 #Plot with circos
-BioCircos(tracks,genomeFillColor = barcolor, genome = OliGenome, genomeTicksDisplay=F,genomeLabelDy=0, genomeLabelTextSize="12pt", width=850,height=850)
+BioCircos(tracks,genomeFillColor = barcolor, genome = Genome, genomeTicksDisplay=F,genomeLabelDy=0, genomeLabelTextSize="12pt", width=850,height=850)
 ```
+The Oligotropha dataset displays evidence of contamination with Ralstonia. The sequencing data was performed in parallel with the Ralstonia library and the Illumina multiplexing indices were not properly ligated. In fishing further Oligotropha data out of the unindexed file, Ralstonia reads mapped to some regions of Oligotropha's genome. Its greater presence in the sequencing data meant that wherever Ralstonia regions mapped to Oligotropha genome, an artificial spike is introduced to TnSeq data.
+
+Next, we will create a genome browser to examine this data at the gene level in Python.
